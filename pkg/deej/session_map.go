@@ -81,6 +81,7 @@ func (m *sessionMap) initialize() error {
 
 	m.setupOnConfigReload()
 	m.setupOnSliderMove()
+	m.setupOnVolumeChange()
 
 	return nil
 }
@@ -118,8 +119,8 @@ func (m *sessionMap) getAndAddSessions() error {
 	}
 
 	m.logger.Infow("Got all audio sessions successfully", "sessionMap", m)
-	m.logger.Infow("Active sessions","sessions", m.m)
-	
+	m.logger.Infow("Active sessions", "sessions", m.m)
+
 	return nil
 }
 
@@ -146,6 +147,15 @@ func (m *sessionMap) setupOnSliderMove() {
 			case event := <-sliderEventsChannel:
 				m.handleSliderMoveEvent(event)
 			}
+		}
+	}()
+}
+
+func (m *sessionMap) setupOnVolumeChange() {
+
+	go func() {
+		for {
+			m.handleVolumeChangeEvent()
 		}
 	}()
 }
@@ -270,6 +280,56 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 		// (or another, more catastrophic failure happens)
 		m.refreshSessions(true)
 	}
+}
+
+// sends new slider values to the arduino when they were changed in the windows soundmixer
+func (m *sessionMap) handleVolumeChangeEvent() {
+	// first of all, ensure our session map isn't moldy
+	if m.lastSessionRefresh.Add(maxTimeBetweenSessionRefreshes).Before(time.Now()) {
+		m.logger.Debug("Stale session map detected on slider move, refreshing")
+		m.refreshSessions(true)
+	}
+
+	// get the targets mapped to this slider from the config  m.deej.config.SliderMapping.getSliderCount() m.deej.serial.lastKnownNumSliders
+	for i := 0; i < m.deej.serial.lastKnownNumSliders; i++ {
+		targets, ok := m.deej.config.SliderMapping.get(i)
+
+		// if slider not found in config, silently ignore
+		if !ok {
+			return
+		}
+
+		// for each possible target for this slider...
+		for _, target := range targets {
+
+			// resolve the target name by cleaning it up and applying any special transformations.
+			// depending on the transformation applied, this can result in more than one target name
+			resolvedTargets := m.resolveTarget(target)
+
+			// for each resolved target...
+			for _, resolvedTarget := range resolvedTargets {
+
+				// check the map for matching sessions
+				sessions, ok := m.get(resolvedTarget)
+
+				// no sessions matching this target - move on
+				if !ok {
+					continue
+				}
+
+				// iterate all matching sessions and compare the volume to the current slider values
+				for _, session := range sessions {
+					if session.GetVolume() != m.deej.serial.currentSliderPercentValues[i] {
+						// compare to list of last channel values recieved from arduino (saved in serial.go)
+						// send the new values to the arduino
+						m.deej.serial.sendSliderValue(m.deej.config.logger, i, session.GetVolume())
+					}
+				}
+			}
+		}
+	}
+	const stopDelay = 50 * time.Millisecond
+	<-time.After(stopDelay)
 }
 
 func (m *sessionMap) targetHasSpecialTransform(target string) bool {

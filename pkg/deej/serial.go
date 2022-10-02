@@ -123,7 +123,17 @@ func (sio *SerialIO) Start() error {
 			}
 		}
 	}()
+	
+	// Initialize slider values
+	// so deej automatically updates the Arduino on programm start
+	sio.lastKnownNumSliders = sio.deej.config.SliderMapping.getSliderCount()
+	sio.currentSliderPercentValues = make([]float32, sio.lastKnownNumSliders)
 
+	// reset everything to be an impossible value to force the slider move event later
+	for idx := range sio.currentSliderPercentValues {
+		sio.currentSliderPercentValues[idx] = -1.0
+	}
+	
 	return nil
 }
 
@@ -198,6 +208,29 @@ func (sio *SerialIO) close(logger *zap.SugaredLogger) {
 	sio.connected = false
 }
 
+func (sio *SerialIO) reconnect() {
+	for {
+		err := sio.Start()
+		<-time.After(50*time.Millisecond)
+		if err != nil {
+			sio.Stop()
+			<-time.After(50*time.Millisecond)
+		} else {
+			return
+		}
+	}
+}
+
+func (sio *SerialIO) sendSliderValue(logger *zap.SugaredLogger, sliderId int, sliderVal float32) {
+	// send the new slider value to the Arduino
+	sio.conn.Write([]byte("Windows:" + strconv.Itoa(sliderId) + ";" + (fmt.Sprint(int(sliderVal * 100))) + "\n"))
+	if sio.deej.Verbose() {
+		logger.Debugw("Value Sent", "val", strconv.Itoa(sliderId)+";"+(fmt.Sprint(int(sliderVal*100))))
+	}
+	// and save the current value
+	sio.currentSliderPercentValues[sliderId] = sliderVal
+}
+
 func (sio *SerialIO) readLine(logger *zap.SugaredLogger, reader *bufio.Reader) chan string {
 	ch := make(chan string)
 
@@ -209,8 +242,9 @@ func (sio *SerialIO) readLine(logger *zap.SugaredLogger, reader *bufio.Reader) c
 				if sio.deej.Verbose() {
 					logger.Warnw("Failed to read line from serial", "error", err, "line", line)
 				}
-
-				// just ignore the line, the read loop will stop after this
+				// try to reconnect when the arduino was unplugged
+				sio.logger.Info("Com port not available, attempting to renew connection")
+				sio.reconnect()
 				return
 			}
 
@@ -227,6 +261,15 @@ func (sio *SerialIO) readLine(logger *zap.SugaredLogger, reader *bufio.Reader) c
 }
 
 func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
+	// check if the Arduino has requested the slider values from deej on startup
+	// this is needed if deej was already running when the Arduino started
+	if strings.HasPrefix(line, "getSliderValues") {
+		<-time.After(50*time.Millisecond)
+		for i := 0; i < sio.lastKnownNumSliders; i++ {
+			sio.sendSliderValue(logger, i, sio.currentSliderPercentValues[i])
+			<-time.After(50*time.Millisecond)
+		}
+	}
 
 	// this function receives an unsanitized line which is guaranteed to end with LF,
 	// but most lines will end with CRLF. it may also have garbage instead of
