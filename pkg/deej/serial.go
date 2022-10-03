@@ -209,16 +209,21 @@ func (sio *SerialIO) close(logger *zap.SugaredLogger) {
 }
 
 func (sio *SerialIO) reconnect() {
-	for {
-		err := sio.Start()
-		<-time.After(50*time.Millisecond)
-		if err != nil {
-			sio.Stop()
+	sio.Stop()
+	<-time.After(50*time.Millisecond)
+	go func() {
+		for {
+			// try to connect to the arduino
+			err := sio.Start()
 			<-time.After(50*time.Millisecond)
-		} else {
-			return
+			// wait 10 seconds when the attempt failed, otherwise quit the loop
+			if err != nil {
+				<-time.After(10000*time.Millisecond)
+			} else {
+				break
+			}
 		}
-	}
+	}()
 }
 
 func (sio *SerialIO) sendSliderValue(logger *zap.SugaredLogger, sliderId int, sliderVal float32) {
