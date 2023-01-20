@@ -3,7 +3,7 @@
 This is a modified version of [YaMoef´s](https://github.com/YaMoef/deej) deej version ([Original deej](https://github.com/omriharel/deej)). I wanted to control the volume of different programs instead of using the mixer of Windows and was quiet happy I discovered deej. I also wanted to have "virtual" sliders, instead of sliders that have a physical start and endpoint. So I used YaMoef´s version, who did a great job optimising deej for rotary encoders. 
 My version enables communication between the arduino and windows in both directions. This means that the arduino can get the correct soundmixer levels from the computer, when they are changed there. 
 Another feature I implemented is the autoconnect function. When the Arduino gets disconnected from the compute, deej tries to reconnect until the com port is available again. This way you don't have to restart deej every time you reconnect the controller.
-![Build](assets/deej_Controller_Build.JPG)
+![Build](assets/deej_Controller_Build.jpg)
 
 # Main changes
 
